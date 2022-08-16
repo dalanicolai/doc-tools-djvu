@@ -1,20 +1,15 @@
-;; (defmacro djvu-ref (name params &rest body)
-;;   `(defun ,name ,params
-;;      ,@(cdr body))
+(defvar djvu-info-commands '(djvu-length djvu-text-contents djvu-page-sizes djvu-bookmarks))
 
-;; (djvu-ref test (zo)
-;;           (interactive (list "hoi"))
-;;           (print zo))
-
-
-;; (let ((value ,@(cdr body)))
-;;   (djvu-return body))
-;; ()
-
-(defmacro djvu-return (value)
-  `(if (called-interactively-p 'interactive)
-       (pp ,value)
-     ,value))
+(defun djvu-info (function &optional arg)
+  (interactive (if (string= (file-name-extension (buffer-file-name)) "djvu")
+                   (list (completing-read "Select info type: "
+                                          djvu-info-commands)
+                         current-prefix-arg)
+                 (user-error "Buffer file not of `djvu' type")))
+  (pp (funcall (intern-soft function))
+      (when arg
+        (get-buffer-create "*djvu-info*")))
+  (when arg (pop-to-buffer "*djvu-info*")))
 
 (defun djvu-assert-djvu-file (file &optional no-error)
   (if (string= (file-name-extension file) "djvu")
@@ -36,10 +31,11 @@
   (let ((length (string-to-number
                  (shell-command-to-string
                   (format "djvused -e n '%s'" (or file (djvu-select-file)))))))
-    (djvu-return length)))
+    length))
 
                                         ;NOTE returns nil when page is empty
-(defun djvu-text-contents (&optional file detail page)
+(defun djvu-text-contents (&optional detail page file)
+  (setq file (or file (buffer-file-name)))
   (interactive
    (let ((last-page (djvu-length)))
      (list buffer-file-name
@@ -57,7 +53,7 @@
          (data (read (concat (if detail "(" "\"")
                              output
                              (if detail ")" "\"")))))
-    (djvu-return data)))
+    data))
 
 ;;TODO replace 
 ;; (defun papyrus-djvu-text-contents (&optional detail page return)
@@ -80,12 +76,11 @@
   (if file
       (djvu-assert-djvu-file file)
     (setq file (djvu-select-file)))
-  (djvu-return
-   (mapcar (lambda (l)
-             (let ((columns (split-string l "[ =]" t)))
-               (cons (string-to-number (nth 1 columns))
-                     (string-to-number (nth 3 columns)))))
-           (process-lines "djvused" "-e" "'size'" file))))
+  (mapcar (lambda (l)
+            (let ((columns (split-string l "[ =]" t)))
+              (cons (string-to-number (nth 1 columns))
+                    (string-to-number (nth 3 columns)))))
+          (process-lines "djvused" "-e" "'size'" file)))
 
 ;; (defun djvu-decode-thumbs (file outfile-base page &optional format max-width max-height)
 ;;   (let ((outdir (concat "/tmp/" (file-name-base file))))
@@ -117,7 +112,7 @@
                                "-format=tiff"
                                "-eachpage"
                                (format "-size=%sx%s" 175 2000)
-                               "-quality=80"
+                               "-quality=50"
                                file
                                (concat "/tmp/"
                                        (file-name-as-directory (file-name-base file))
@@ -131,37 +126,52 @@
 ;; to reduce memory usage
 
 ;; NOTE tiff version (uses much less memory than pnm, but requires temp file)
-;; (defun djvu-decode-page (page width &optional file)
-;;   (setq file (or file (buffer-file-name)))
-;;   (let ((status (call-process "ddjvu" nil t nil
-;;                               (format "-size=%dx%d" width 10000)
-;;                               "-format=tiff"
-;;                               (format "-page=%d" page)
-;;                               file
-;;                               "/tmp/djvu-temp-img")))
-;;     (unless (and status (zerop status))
-;;       (error "Ddjvu error %s" status))
-;;     (with-temp-buffer
-;;       (set-buffer-multibyte nil)
-;;       (setq coding-system-for-read 'binary)
-;;       (insert-file-contents-literally "/tmp/djvu-temp-img")
-;;       (buffer-substring-no-properties (point-min) (point-max)))))
-
 (defun djvu-decode-page (page width &optional file)
   (setq file (or file (buffer-file-name)))
+  (let ((status (call-process "ddjvu" nil t nil
+                              (format "-size=%dx%d" width 10000)
+                              "-format=tiff"
+                              (format "-page=%d" page)
+                              ;; "-quality=50"
+                              file
+                              "/tmp/djvu-temp-img")))
+    (unless (and status (zerop status))
+      (error "Ddjvu error %s" status))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (setq coding-system-for-read 'binary)
+      (insert-file-contents-literally "/tmp/djvu-temp-img")
+      (buffer-substring-no-properties (point-min) (point-max)))))
+
+;; (defun djvu-decode-page (page width &optional file)
+;;   (setq file (or file (buffer-file-name)))
+;;   (with-temp-buffer
+;;     (set-buffer-multibyte nil)
+;;     (let* ((coding-system-for-read 'raw-text)
+;;            ;; For a rectangular image, ISIZE does not give us
+;;            ;; the actual size of the image, but (max width height)
+;;            ;; will be equal to ISIZE.
+;;            (status (call-process "ddjvu" nil t nil
+;;                                  (format "-size=%dx%d" width 5000)
+;;                                  "-format=pnm" ;pnm automatically selects most
+;;                                         ;efficient decoding of p(b/g/p)m
+;;                                  (format "-page=%d" page)
+;;                                  file)))
+;;       (unless (zerop status)
+;;         (error "Ddjvu error %s" status))
+;;       (buffer-substring-no-properties
+;;        (point-min) (point-max)))))
+
+(defun djvu-bookmarks (&optional file)
+  (interactive)
+  (setq file (or file (buffer-file-name)))
   (with-temp-buffer
-    (set-buffer-multibyte nil)
-    (let* ((coding-system-for-read 'raw-text)
-           ;; For a rectangular image, ISIZE does not give us
-           ;; the actual size of the image, but (max width height)
-           ;; will be equal to ISIZE.
-           (status (call-process "ddjvu" nil t nil
-                                 (format "-size=%dx%d" width 5000)
-                                 "-format=pnm" ;pnm automatically selects most
-                                        ;efficient decoding of p(b/g/p)m
-                                 (format "-page=%d" page)
-                                 file)))
-      (unless (zerop status)
-        (error "Ddjvu error %s" status))
-      (buffer-substring-no-properties
-       (point-min) (point-max)))))
+    (call-process-shell-command
+     (format "djvused '%s' -e 'print-outline'" (print file))
+     nil t)
+    (buffer-string)
+    (when (> (buffer-size) 0)
+      (while (search-backward "#" nil t)
+        (replace-match ""))
+      (goto-char (point-min))
+      (cdr (read (current-buffer))))))
