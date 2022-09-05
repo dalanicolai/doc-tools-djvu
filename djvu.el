@@ -1,4 +1,8 @@
-(defvar djvu-info-commands '(djvu-length djvu-text-contents djvu-page-sizes djvu-bookmarks))
+(defvar djvu-info-commands '(djvu-length
+                             djvu-structured-text
+                             djvu-page-sizes
+                             djvu-bookmarks
+                             djvu-annots))
 
 (defun djvu-info (function &optional arg)
   (interactive (if (string= (file-name-extension (buffer-file-name)) "djvu")
@@ -6,7 +10,9 @@
                                           djvu-info-commands)
                          current-prefix-arg)
                  (user-error "Buffer file not of `djvu' type")))
-  (pp (funcall (intern-soft function))
+  (pp (pcase (intern-soft function)
+        ('djvu-structured-text (call-interactively #'djvu-structured-text))
+        (var (funcall var)))
       (when arg
         (get-buffer-create "*djvu-info*")))
   (when arg (pop-to-buffer "*djvu-info*")))
@@ -26,22 +32,24 @@
                                     (djvu-assert-djvu-file f t))))))
 
 (defun djvu-length (&optional file)
-  (interactive)
   (djvu-assert-djvu-file (or file buffer-file-name))
   (let ((length (string-to-number
                  (shell-command-to-string
                   (format "djvused -e n '%s'" (or file (djvu-select-file)))))))
     length))
 
-                                        ;NOTE returns nil when page is empty
-(defun djvu-text-contents (&optional detail page file)
-  (setq file (or file (buffer-file-name)))
+;; NOTE returns nil when page is empty
+(defun djvu-structured-text (&optional detail page file)
+  "Interactively, this command should be called using the command
+`djvu-info'."
   (interactive
    (let ((last-page (djvu-length)))
-     (list buffer-file-name
-           (completing-read "Select detail: "
+     (list (completing-read "Select detail: "
                             '(page column region para line word char))
-           (read-number (format "Select page(s) (max %s): " last-page) 0))))
+           (read-number (format "Select page(s) (max %s): " last-page)
+                        (or (scrap-current-page) 1))
+           buffer-file-name)))
+  (setq file (or file buffer-file-name))
   (if file
       (djvu-assert-djvu-file file)
     (setq file (djvu-select-file)))
@@ -49,11 +57,10 @@
                   (concat  "djvutxt "
                            (when page (format "--page=%s " page))
                            (when detail (format "--detail=%s " detail))
-                           (format "\"%s\"" file))))
-         (data (read (concat (if detail "(" "\"")
-                             output
-                             (if detail ")" "\"")))))
-    data))
+                           (format "\"%s\"" file)))))
+    (read (concat (if detail "(" "\"")
+                  output
+                  (if detail ")" "\"")))))
 
 ;;TODO replace 
 ;; (defun papyrus-djvu-text-contents (&optional detail page return)
@@ -69,6 +76,50 @@
 ;;       (read (concat (unless page "(")
 ;;                     output
 ;;                     (unless page ")"))))))
+
+(defun djvu-structural-filter (fn hidden-text-list &optional format-fn)
+  (letrec ((elements nil)
+           (recur (lambda (text)
+                    (when (stringp (nth 5 text)) ;also 'non-word' elements can
+                                                 ;contain strings
+                      (setq w (1+ w)))
+                    (if (funcall fn text)
+                        (push (if format-fn (funcall format-fn text n w) text)
+                              elements)
+                      (unless (stringp (nth 5 text))
+                        (mapcar (lambda (e)
+                                  (funcall recur e))
+                                (nthcdr 5 text))))))
+           (n 0)
+           (w 0))
+    (if (symbolp (car hidden-text-list))
+        (funcall recur hidden-text-list)
+      (dolist (p hidden-text-list)
+        (setq n (1+ n))
+        (funcall recur p)))
+    (nreverse elements)))
+
+(defun djvu-text-elements (&optional detail page file)
+  (djvu-structural-filter
+   (lambda (e) (stringp (nth 5 e)))
+   (djvu-structured-text (or detail 'char) page file)))
+
+(defun djvu-search-word (word &optional contents)
+  (djvu-structural-filter (lambda (e)
+                            (when (stringp (nth 5 e))
+                              (string-match word (nth 5 e))))
+                          (or contents scrap-structured-contents)
+                          (lambda (e p w) (cons (if contents w p) (cdr e)))))
+
+(defun djvu-keyboard-annot (patt1 patt2)
+  (interactive "sEnter start pattern: \nsEnter end pattern: ")
+  (let* ((text (djvu-structured-text 'word 3))
+         (m1 (djvu-search-word patt1 text))
+         (m2 (djvu-search-word patt2 text)))
+    (djvu-structural-filter (lambda (e) (and (stringp (nth 5 e))
+                                             (<= (caar m1) (print w) (print (caar m2)))))
+                            text
+                            (lambda (e p w) (print e)))))
 
 (defun djvu-page-sizes (&optional file)
   "The page sizes as stored in the document."
@@ -102,21 +153,37 @@
 ;;              (if format (symbol-name format) "tif")
 ;;              "'"))))
 
+(defun djvu-decode-pages (&optional file force)
+  "Asynchronously create thumb files for all pages."
+  (setq file (or file (buffer-file-name)))
+  (let ((outdir (concat "/tmp/"
+                        (file-name-as-directory (file-name-base file))
+                        "pages/")))
+    (unless (file-exists-p outdir)
+      (make-directory outdir t))
+    (let ((proc (start-process "ddjvu" "djvu decode thumbs" "ddjvu"
+                               "-format=tiff"
+                               "-eachpage"
+                               (format "-size=%sx%s" 944 5000)
+                               "-quality=50"
+                               file
+                               (concat outdir "page-%d.tiff"))))
+      (set-process-sentinel proc (lambda (process event)
+                                   (message "Create thumbs process %s" event))))))
+
 (defun djvu-decode-thumbs (&optional file force)
   "Asynchronously create thumb files for all pages."
   (setq file (or file (buffer-file-name)))
-  (let ((outdir (concat "/tmp/" (file-name-as-directory (file-name-base file)))))
+  (let ((outdir (concat "/tmp/" (file-name-as-directory (file-name-base file)) "thumbs/")))
     (unless (file-exists-p outdir)
-      (make-directory (concat "/tmp/" (file-name-base file))))
+      (make-directory outdir))
     (let ((proc (start-process "ddjvu" "djvu decode thumbs" "ddjvu"
                                "-format=tiff"
                                "-eachpage"
                                (format "-size=%sx%s" 175 2000)
                                "-quality=50"
                                file
-                               (concat "/tmp/"
-                                       (file-name-as-directory (file-name-base file))
-                                       "thumb%d.tif"))))
+                               (concat outdir "thumb%d.tif"))))
       (set-process-sentinel proc (lambda (process event)
                                    (message "Create thumbs process %s" event))))))
 
@@ -132,7 +199,8 @@
                               (format "-size=%dx%d" width 10000)
                               "-format=tiff"
                               (format "-page=%d" page)
-                              ;; "-quality=50"
+                              "-quality=50" ;; for some files this argument is
+                                            ;; essential
                               file
                               "/tmp/djvu-temp-img")))
     (unless (and status (zerop status))
@@ -162,16 +230,27 @@
 ;;       (buffer-substring-no-properties
 ;;        (point-min) (point-max)))))
 
-(defun djvu-bookmarks (&optional file)
-  (interactive)
+(defun djvu-djvused (command &optional page file)
   (setq file (or file (buffer-file-name)))
   (with-temp-buffer
-    (call-process-shell-command
-     (format "djvused '%s' -e 'print-outline'" (print file))
-     nil t)
-    (buffer-string)
-    (when (> (buffer-size) 0)
-      (while (search-backward "#" nil t)
-        (replace-match ""))
-      (goto-char (point-min))
-      (cdr (read (current-buffer))))))
+  ;; (with-current-buffer (get-buffer-create "test")
+    (let ((format-command (concat (when page (format "select %d;" page))
+                                  command)))
+      (call-process-shell-command
+       (format "djvused '%s' -e '%s'" file format-command)
+       nil t)
+      (when (> (buffer-size) 0)
+        (goto-char (point-min))
+        (when (string= command "print-ant")
+          (while (re-search-forward " \\(#[[:alnum:]]+\\)" nil t)
+            (replace-match " \"\\1\"")))
+        (goto-char (point-min))
+        (if (looking-at-p "(")
+            (read (concat "(" (buffer-string) ")"))
+          (buffer-string))))))
+
+(defun djvu-bookmarks (&optional file)
+  (djvu-djvused "print-outline" nil file))
+
+(defun djvu-annots (&optional page file)
+  (djvu-djvused "print-ant" (or page (scrap-current-page) file)))
