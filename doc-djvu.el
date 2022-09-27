@@ -47,7 +47,7 @@
      (list (completing-read "Select detail: "
                             '(plain page column region para line word char))
            (read-number (format "Select page(s) (max %s): " last-page)
-                        (or (scrap-current-page) 1))
+                        (or (doc-scroll-current-page) 1))
            buffer-file-name)))
   (setq file (or file buffer-file-name))
   (if file
@@ -110,7 +110,7 @@
   (doc-djvu-structural-filter (lambda (e)
                             (when (stringp (nth 5 e))
                               (string-match word (nth 5 e))))
-                          (or contents scrap-structured-contents)
+                          (or contents doc-scroll-structured-contents)
                           (lambda (e p w) (cons (if contents w p) (cdr e)))))
 
 (defun doc-djvu-keyboard-annot (patt1 patt2)
@@ -255,7 +255,7 @@
   (doc-djvu-djvused "print-outline" nil file))
 
 (defun doc-djvu-annots (&optional page file)
-  (doc-djvu-djvused "print-ant" (or page (scrap-current-page)) file))
+  (doc-djvu-djvused "print-ant" (or page (doc-scroll-current-page)) file))
 
 (defun doc-djvu-annots-all (&optional file)
   (setq file (or file (buffer-file-name)))
@@ -354,16 +354,16 @@
    0 -1))
 
 (defun doc-djvu-add-annot (url comment area &optional page &rest args)
-  (setq page (or page (scrap-current-page)))
+  (setq page (or page (doc-scroll-current-page)))
   (let ((annot `(maparea ,url ,comment ,area ,@args)))
-    (setf (scrap-annots page) (append (scrap-annots page) (list annot)))))
+    (setf (doc-scroll-annots page) (append (doc-scroll-annots page) (list annot)))))
 
 (defun doc-djvu-create-annot (&optional style color)
   (interactive (list (completing-read "Select type: "
                                       '(rect) nil t)
                      (completing-read "select-color: "
                                       '(yellow red green blue))))
-  (let ((page (car scrap-active-region)))
+  (let ((page (car doc-scroll-active-region)))
     (mapcar (lambda (a)
               (pcase-let ((`(,x1 ,y1 ,x2 ,y2) a))
                 (setq a (list x1 y1 (- x2 x1) (- y2 y1))))
@@ -374,9 +374,9 @@
                               (list 'hilite
                                     (upcase (apply #'color-rgb-to-hex
                                                    (append (color-name-to-rgb (or color "yellow")) '(2)))))))
-            (scrap-active-regions (cdr scrap-active-region))))
-  (setq scrap-active-region nil)
-  (scrap-update t))
+            (doc-scroll-active-regions (cdr doc-scroll-active-region))))
+  (setq doc-scroll-active-region nil)
+  (doc-scroll-update t))
 
 (defun color-name-to-hex (name)
   (apply #'color-rgb-to-hex (append (color-name-to-rgb "red") '(2))))
