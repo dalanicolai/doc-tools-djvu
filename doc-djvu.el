@@ -115,10 +115,10 @@
 
 (defun doc-djvu-search-word (word &optional contents)
   (doc-djvu-structural-filter (lambda (e)
-                            (when (stringp (nth 5 e))
-                              (string-match word (nth 5 e))))
-                          (or contents doc-scroll-structured-contents)
-                          (lambda (e p w) (cons (if contents w p) (cdr e)))))
+                                (when (stringp (nth 5 e))
+                                  (string-match word (nth 5 e))))
+                              (or contents (doc-scroll-structured-text))
+                              (lambda (e p w) (cons (if contents w p) (cdr e)))))
 
 (defun doc-djvu-keyboard-annot (patt1 patt2)
   (interactive "sEnter start pattern: \nsEnter end pattern: ")
@@ -197,7 +197,7 @@ prefixed with the universal argument, undoes the inversion."
   "Asynchronously create thumb files for all pages."
   (setq file (or file (buffer-file-name)))
   (let ((outdir (concat "/tmp/" (file-name-as-directory (file-name-base file)) "thumbs/")))
-    (unless (print (file-exists-p outdir))
+    (unless (file-exists-p outdir)
       (make-directory outdir)
       (let ((proc (start-process "ddjvu" "djvu decode thumbs" "ddjvu"
                                  "-format=tiff"
@@ -275,9 +275,11 @@ prefixed with the universal argument, undoes the inversion."
   (doc-djvu-djvused "print-outline" nil file))
 
 (defun doc-djvu-annots (&optional page file)
+  (interactive)
   (doc-djvu-djvused "print-ant" (or page (doc-scroll-current-page)) file))
 
 (defun doc-djvu-annots-all (&optional file)
+  (interactive)
   (setq file (or file (buffer-file-name)))
   (with-temp-buffer
     (call-process "djvused" nil t nil
@@ -300,7 +302,7 @@ prefixed with the universal argument, undoes the inversion."
                               (read (concat "(" (cadr split) ")"))))
                   lines))
           (setq split (cdr split))))
-      lines)))
+      (nreverse lines))))
 
 (defun doc-djvu-raw-contents (&optional arg file)
   (interactive "P")
@@ -314,7 +316,7 @@ prefixed with the universal argument, undoes the inversion."
                (erase-buffer)
                (insert contents)
                (goto-char (point-min)))
-          (t (buffer-string)))))
+          (t contents))))
 
 (defun doc-djvu-parse-raw-contents (&optional file)
   (setq file (or file (buffer-file-name)))
@@ -401,5 +403,17 @@ prefixed with the universal argument, undoes the inversion."
 (defun color-name-to-hex (name)
   (apply #'color-rgb-to-hex (append (color-name-to-rgb "red") '(2))))
 
+(defun doc-djvu-skim-pages (query &optional file)
+  (interactive "sEnter queries: ")
+  (let* ((text (doc-djvu-text-elements 'page nil file))
+         (p 1))
+    (setq results (mapcar (lambda (e)
+                         (prog1 (cons p (nth 5 e)) (setq p (1+ p))))
+                       text))
+    (dolist (query (split-string query))
+      (setq results (seq-filter (lambda (s)
+                               (string-match query (cdr s)))
+                             results)))
+    (print (mapcar #'car results))))
 
 ;; TODO compare `doc-djvu-parse-raw-contents' with the 'current contents'
