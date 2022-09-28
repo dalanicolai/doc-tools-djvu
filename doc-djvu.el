@@ -1,8 +1,15 @@
+(defun doc-djvu-invert-tiff (file &optional arg)
+  (interactive "f\nP")
+  (if (executable-find "tiffset")
+      (call-process "tiffset" nil nil nil "-s" "262" (if arg "1" "0") file)
+    (message "Unable to find `tifsett' shell command")))
+
 (defvar doc-djvu-info-commands '(doc-djvu-length
-                             doc-djvu-structured-text
-                             doc-djvu-page-sizes
-                             doc-djvu-bookmarks
-                             doc-djvu-annots))
+                                 doc-djvu-structured-text
+                                 doc-djvu-page-sizes
+                                 doc-djvu-bookmarks
+                                 doc-djvu-annots
+                                 doc-djvu-parse-raw-contents))
 
 (defun doc-djvu-info (function &optional arg)
   (interactive (if (string= (file-name-extension (buffer-file-name)) "djvu")
@@ -155,12 +162,25 @@
 ;;              (if format (symbol-name format) "tif")
 ;;              "'"))))
 
+(defun doc-djvu-decode-directory (&optional file thumbs)
+  (interactive "f\nP")
+  (concat "/tmp/"
+          (file-name-as-directory (file-name-base file))
+          "pages/"))
+
+(defun doc-backend-djvu-invert (&optional arg)
+  "Invert color of pages.
+Uses the tiffset command to invert the color of the pages. When
+prefixed with the universal argument, undoes the inversion."
+  (interactive "P")
+  (dolist (f (directory-files (doc-djvu-decode-directory buffer-file-name)
+                              t "tiff$"))
+    (doc-djvu-invert-tiff f arg)))
+
 (defun doc-djvu-decode-pages (width &optional file force)
   "Asynchronously create thumb files for all pages."
   (setq file (or file (buffer-file-name)))
-  (let ((outdir (concat "/tmp/"
-                        (file-name-as-directory (file-name-base file))
-                        "pages/")))
+  (let ((outdir (doc-djvu-decode-directory file)))
     (unless (file-exists-p outdir)
       (make-directory outdir t)
       (let ((proc (start-process "ddjvu" "djvu decode thumbs" "ddjvu"
