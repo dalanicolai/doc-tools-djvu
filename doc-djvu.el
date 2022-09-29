@@ -164,7 +164,7 @@
 
 (defun doc-djvu-decode-directory (&optional file thumbs)
   (interactive "f\nP")
-  (concat "/tmp/"
+  (concat "/tmp/doc-tools/"
           (file-name-as-directory (file-name-base file))
           "pages/"))
 
@@ -196,7 +196,7 @@ prefixed with the universal argument, undoes the inversion."
 (defun doc-djvu-decode-thumbs (&optional file force)
   "Asynchronously create thumb files for all pages."
   (setq file (or file (buffer-file-name)))
-  (let ((outdir (concat "/tmp/" (file-name-as-directory (file-name-base file)) "thumbs/")))
+  (let ((outdir (concat "/tmp/doc-tools/" (file-name-as-directory (file-name-base file)) "thumbs/")))
     (unless (file-exists-p outdir)
       (make-directory outdir)
       (let ((proc (start-process "ddjvu" "djvu decode thumbs" "ddjvu"
