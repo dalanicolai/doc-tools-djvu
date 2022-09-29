@@ -384,13 +384,13 @@ prefixed with the universal argument, undoes the inversion."
   (interactive (list (completing-read "Select type: "
                                       '(rect) nil t)
                      (completing-read "select-color: "
-                                      '(yellow red green blue))))
+                                      '(gold darkgreen red blue yellow))))
   (let ((page (car doc-scroll-active-region)))
     (mapcar (lambda (a)
               (pcase-let ((`(,x1 ,y1 ,x2 ,y2) a))
                 (setq a (list x1 y1 (- x2 x1) (- y2 y1))))
               (doc-djvu-add-annot "" ""
-                              `(,(make-symbol (or style 'rect))
+                              `(,(intern (or style 'rect))
                                 ,@a)
                               page
                               (list 'hilite
